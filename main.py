@@ -70,7 +70,12 @@ async def current_weather(
 
     try:
         async with httpx.AsyncClient(
-            timeout=30
+            timeout=httpx.Timeout(
+                connect=20,
+                read=60,
+                write=20,
+                pool=20,
+            )
         ) as client:
 
             response = await client.get(
@@ -168,7 +173,7 @@ async def mandi_prices(
     ),
 ):
     # -----------------------------------------------------
-    # CHECK DATA.GOV.IN API KEY
+    # CHECK API KEY
     # -----------------------------------------------------
 
     if (
@@ -184,25 +189,18 @@ async def mandi_prices(
         )
 
     # -----------------------------------------------------
-    # BUILD API PARAMETERS
+    # IMPORTANT:
+    # Do not send state/district/commodity filters
+    # directly to Data.gov.in at this stage.
+    # This avoids timeout caused by unknown field names
+    # or heavy filtered requests.
     # -----------------------------------------------------
 
     mandi_params = {
         "api-key": DATA_GOV_API_KEY,
         "format": "json",
         "limit": limit,
-        "filters[state]": state,
     }
-
-    if district:
-        mandi_params[
-            "filters[district]"
-        ] = district
-
-    if commodity:
-        mandi_params[
-            "filters[commodity]"
-        ] = commodity
 
     # -----------------------------------------------------
     # CALL DATA.GOV.IN API
@@ -210,7 +208,12 @@ async def mandi_prices(
 
     try:
         async with httpx.AsyncClient(
-            timeout=60
+            timeout=httpx.Timeout(
+                connect=30,
+                read=120,
+                write=30,
+                pool=30,
+            )
         ) as client:
 
             response = await client.get(
@@ -273,62 +276,137 @@ async def mandi_prices(
 
     results = []
 
+    # -----------------------------------------------------
+    # LOCAL FILTERING HELPERS
+    # -----------------------------------------------------
+
+    requested_state = (
+        state.strip().lower()
+        if state
+        else ""
+    )
+
+    requested_district = (
+        district.strip().lower()
+        if district
+        else ""
+    )
+
+    requested_commodity = (
+        commodity.strip().lower()
+        if commodity
+        else ""
+    )
+
+    # -----------------------------------------------------
+    # CONVERT AND FILTER RECORDS
+    # -----------------------------------------------------
+
     for record in records:
+        record_state = str(
+            record.get(
+                "state",
+                "",
+            )
+        ).strip()
+
+        record_district = str(
+            record.get(
+                "district",
+                "",
+            )
+        ).strip()
+
+        record_market = str(
+            record.get(
+                "market",
+                record.get(
+                    "market_name",
+                    "",
+                ),
+            )
+        ).strip()
+
+        record_commodity = str(
+            record.get(
+                "commodity",
+                "",
+            )
+        ).strip()
+
+        record_variety = str(
+            record.get(
+                "variety",
+                "",
+            )
+        ).strip()
+
+        record_min_price = record.get(
+            "min_price",
+            record.get(
+                "min",
+                "",
+            ),
+        )
+
+        record_max_price = record.get(
+            "max_price",
+            record.get(
+                "max",
+                "",
+            ),
+        )
+
+        record_modal_price = record.get(
+            "modal_price",
+            record.get(
+                "modal",
+                "",
+            ),
+        )
+
+        record_arrival_date = record.get(
+            "arrival_date",
+            "",
+        )
+
+        # State filter
+        if requested_state:
+            if record_state.lower() != requested_state:
+                continue
+
+        # District filter
+        if requested_district:
+            if (
+                requested_district
+                not in record_district.lower()
+            ):
+                continue
+
+        # Commodity filter
+        if requested_commodity:
+            if (
+                requested_commodity
+                not in record_commodity.lower()
+            ):
+                continue
+
         results.append(
             {
-                "state": record.get(
-                    "state",
-                    state,
-                ),
-                "district": record.get(
-                    "district",
-                    district or "",
-                ),
-                "market": record.get(
-                    "market",
-                    record.get(
-                        "market_name",
-                        "",
-                    ),
-                ),
-                "commodity": record.get(
-                    "commodity",
-                    commodity or "",
-                ),
-                "variety": record.get(
-                    "variety",
-                    "",
-                ),
-                "minPrice": record.get(
-                    "min_price",
-                    record.get(
-                        "min",
-                        "",
-                    ),
-                ),
-                "maxPrice": record.get(
-                    "max_price",
-                    record.get(
-                        "max",
-                        "",
-                    ),
-                ),
-                "modalPrice": record.get(
-                    "modal_price",
-                    record.get(
-                        "modal",
-                        "",
-                    ),
-                ),
-                "arrivalDate": record.get(
-                    "arrival_date",
-                    "",
-                ),
+                "state": record_state,
+                "district": record_district,
+                "market": record_market,
+                "commodity": record_commodity,
+                "variety": record_variety,
+                "minPrice": record_min_price,
+                "maxPrice": record_max_price,
+                "modalPrice": record_modal_price,
+                "arrivalDate": record_arrival_date,
             }
         )
 
     # -----------------------------------------------------
-    # FINAL MANDI RESPONSE
+    # FINAL RESPONSE
     # -----------------------------------------------------
 
     return {
@@ -339,4 +417,6 @@ async def mandi_prices(
             "commodity": commodity,
         },
         "records": results,
+        "source": "data.gov.in",
+        "resourceId": DATA_GOV_RESOURCE_ID,
     }
