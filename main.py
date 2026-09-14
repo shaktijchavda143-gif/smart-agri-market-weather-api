@@ -38,9 +38,24 @@ async def current(latitude: float, longitude: float):
             "windSpeed": data["wind_speed_10m"],
             "description": "હાલનું હવામાન",
         }
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail="Weather provider unavailable") from exc
+        except httpx.HTTPStatusError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "message": "Mandi data provider returned an error",
+                "provider_status": exc.response.status_code,
+                "provider_response": exc.response.text[:500],
+            },
+        ) from exc
 
+    except httpx.RequestError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "message": "Unable to connect to mandi data provider",
+                "error": str(exc),
+            },
+        ) from exc
 
 @app.get("/api/v1/market/mandi")
 async def mandi_prices(
