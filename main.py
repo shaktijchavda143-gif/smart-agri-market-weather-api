@@ -5,7 +5,13 @@ import httpx
 from fastapi import FastAPI, HTTPException, Query
 
 
-app = FastAPI(title="SMART AGRI-MARKET AI Backend")
+# =========================================================
+# APP SETTINGS
+# =========================================================
+
+app = FastAPI(
+    title="SMART AGRI-MARKET AI Backend"
+)
 
 
 # =========================================================
@@ -34,7 +40,8 @@ DATA_GOV_URL = (
 @app.get("/api/v1/health")
 def health():
     return {
-        "status": "ok"
+        "status": "ok",
+        "service": "SMART AGRI-MARKET AI Backend",
     }
 
 
@@ -43,13 +50,15 @@ def health():
 # =========================================================
 
 @app.get("/api/v1/weather/current")
-async def current(
+async def current_weather(
     latitude: float,
     longitude: float,
 ):
-    url = "https://api.open-meteo.com/v1/forecast"
+    weather_url = (
+        "https://api.open-meteo.com/v1/forecast"
+    )
 
-    params = {
+    weather_params = {
         "latitude": latitude,
         "longitude": longitude,
         "current": (
@@ -60,21 +69,39 @@ async def current(
     }
 
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(
+            timeout=30
+        ) as client:
+
             response = await client.get(
-                url,
-                params=params,
+                weather_url,
+                params=weather_params,
             )
 
             response.raise_for_status()
 
-            weather_json = response.json()
-            data = weather_json["current"]
+            weather_payload = response.json()
+
+        current_data = weather_payload.get(
+            "current"
+        )
+
+        if not current_data:
+            raise HTTPException(
+                status_code=502,
+                detail="Weather current data not found",
+            )
 
         return {
-            "temperature": data["temperature_2m"],
-            "humidity": data["relative_humidity_2m"],
-            "windSpeed": data["wind_speed_10m"],
+            "temperature": current_data.get(
+                "temperature_2m"
+            ),
+            "humidity": current_data.get(
+                "relative_humidity_2m"
+            ),
+            "windSpeed": current_data.get(
+                "wind_speed_10m"
+            ),
             "description": "હાલનું હવામાન",
         }
 
@@ -82,9 +109,15 @@ async def current(
         raise HTTPException(
             status_code=502,
             detail={
-                "message": "Weather data provider returned an error",
-                "provider_status": exc.response.status_code,
-                "provider_response": exc.response.text[:500],
+                "message": (
+                    "Weather provider returned an error"
+                ),
+                "provider_status": (
+                    exc.response.status_code
+                ),
+                "provider_response": (
+                    exc.response.text[:500]
+                ),
             },
         ) from exc
 
@@ -92,17 +125,22 @@ async def current(
         raise HTTPException(
             status_code=502,
             detail={
-                "message": "Unable to connect to weather data provider",
-                "error": str(exc),
+                "message": (
+                    "Unable to connect to weather provider"
+                ),
+                "error_type": type(exc).__name__,
+                "error": repr(exc),
             },
         ) from exc
 
-    except (KeyError, ValueError) as exc:
+    except ValueError as exc:
         raise HTTPException(
             status_code=502,
             detail={
-                "message": "Invalid weather data received",
-                "error": str(exc),
+                "message": (
+                    "Invalid weather response received"
+                ),
+                "error": repr(exc),
             },
         ) from exc
 
@@ -114,23 +152,23 @@ async def current(
 @app.get("/api/v1/market/mandi")
 async def mandi_prices(
     state: str = Query(
-        "Gujarat",
+        default="Gujarat",
         min_length=1,
     ),
     district: Optional[str] = Query(
-        None
+        default=None,
     ),
     commodity: Optional[str] = Query(
-        None
+        default=None,
     ),
     limit: int = Query(
-        100,
+        default=100,
         ge=1,
         le=100,
     ),
 ):
     # -----------------------------------------------------
-    # CHECK API KEY
+    # CHECK DATA.GOV.IN API KEY
     # -----------------------------------------------------
 
     if (
@@ -139,14 +177,17 @@ async def mandi_prices(
     ):
         raise HTTPException(
             status_code=503,
-            detail="Mandi API key is not configured",
+            detail=(
+                "Mandi API key is not configured. "
+                "Add DATA_GOV_API_KEY in Render Environment."
+            ),
         )
 
     # -----------------------------------------------------
-    # DATA.GOV.IN PARAMETERS
+    # BUILD API PARAMETERS
     # -----------------------------------------------------
 
-    params = {
+    mandi_params = {
         "api-key": DATA_GOV_API_KEY,
         "format": "json",
         "limit": limit,
@@ -154,25 +195,32 @@ async def mandi_prices(
     }
 
     if district:
-        params["filters[district]"] = district
+        mandi_params[
+            "filters[district]"
+        ] = district
 
     if commodity:
-        params["filters[commodity]"] = commodity
+        mandi_params[
+            "filters[commodity]"
+        ] = commodity
 
     # -----------------------------------------------------
-    # REQUEST TO DATA.GOV.IN
+    # CALL DATA.GOV.IN API
     # -----------------------------------------------------
 
     try:
-        async with httpx.AsyncClient(timeout=20) as client:
+        async with httpx.AsyncClient(
+            timeout=60
+        ) as client:
+
             response = await client.get(
                 DATA_GOV_URL,
-                params=params,
+                params=mandi_params,
             )
 
             response.raise_for_status()
 
-            payload = response.json()
+            mandi_payload = response.json()
 
     except httpx.HTTPStatusError as exc:
         raise HTTPException(
@@ -181,7 +229,9 @@ async def mandi_prices(
                 "message": (
                     "Mandi data provider returned an error"
                 ),
-                "provider_status": exc.response.status_code,
+                "provider_status": (
+                    exc.response.status_code
+                ),
                 "provider_response": (
                     exc.response.text[:500]
                 ),
@@ -195,7 +245,9 @@ async def mandi_prices(
                 "message": (
                     "Unable to connect to mandi data provider"
                 ),
-                "error": str(exc),
+                "error_type": type(exc).__name__,
+                "error": repr(exc),
+                "provider_url": DATA_GOV_URL,
             },
         ) from exc
 
@@ -204,17 +256,17 @@ async def mandi_prices(
             status_code=502,
             detail={
                 "message": (
-                    "Invalid mandi data received"
+                    "Invalid mandi response received"
                 ),
-                "error": str(exc),
+                "error": repr(exc),
             },
         ) from exc
 
     # -----------------------------------------------------
-    # CONVERT DATA.GOV.IN RECORDS
+    # READ RECORDS
     # -----------------------------------------------------
 
-    records = payload.get(
+    records = mandi_payload.get(
         "records",
         [],
     )
@@ -276,7 +328,7 @@ async def mandi_prices(
         )
 
     # -----------------------------------------------------
-    # FINAL RESPONSE
+    # FINAL MANDI RESPONSE
     # -----------------------------------------------------
 
     return {
